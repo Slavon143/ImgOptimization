@@ -9,7 +9,7 @@ class Optimize
     );
     public $exts = ['png', 'jpg', 'jpeg'];
     public $filename;
-
+    public $convertJpg = true;
 
     public function __construct()
     {
@@ -89,17 +89,46 @@ class Optimize
 
     public function optimize($data)
     {
-        $sendImg = $this->sendAPI($data);
-        if (!empty($sendImg)){
-            $diff = $sendImg['src_size'] - $sendImg['dest_size'];
-            $save = $this->saveOptimImg($sendImg);
-           if ($save){
-               $this->updateImg($diff,$data['id']);
-           }
+
+        if ($this->convertJpg){
+            $file = __DIR__ . $data["img"];
+            $info = pathinfo($file);
+
+            $this->convertToJpg($data['img'],__DIR__ . '/optimImg/' . $info['filename'], $data['id']);
+        }else{
+            $sendImg = $this->sendAPI($data);
+
+            if (!empty($sendImg['dest'])){
+                $diff = $sendImg['src_size'] - $sendImg['dest_size'];
+
+                $save = $this->saveOptimImg($sendImg);
+                if ($save){
+                    $this->updateImg($diff,$data['id']);
+                }
+            }
+        }
+    }
+
+    public function convertToJpg($filename,$fileOutput,$id){
+
+        $image = imagecreatefrompng(__DIR__ . "/$filename");
+        $bg = imagecreatetruecolor(imagesx($image), imagesy($image));
+        imagefill($bg, 0, 0, imagecolorallocate($bg, 255, 255, 255));
+        imagealphablending($bg, TRUE);
+        imagecopy($bg, $image, 0, 0, 0, 0, imagesx($image), imagesy($image));
+        imagedestroy($image);
+        $quality = 50; // 0 = worst / smaller file, 100 = better / bigger file
+        imagejpeg($bg, "$fileOutput" . ".jpg", $quality);
+        imagedestroy($bg);
+
+        if (file_exists("$fileOutput" . ".jpg")){
+            $diff = filesize(__DIR__ . "/$filename") - filesize("$fileOutput" . ".jpg");
+            $this->updateImg((int)$diff,$id);
         }
     }
 
     public function saveOptimImg($sendImg){
+        $this->filename = str_replace(".png",".jpeg",$this->filename);
 
         $getOptimImg = file_get_contents($sendImg['dest']);
         if ($getOptimImg){
@@ -139,7 +168,7 @@ class Optimize
         $mime = mime_content_type($file);
         $info = pathinfo($file);
         $this->filename = $info['basename'];
-        var_dump($this->filename);
+
         $output = new CURLFile($file, $mime, $this->filename);
         $dataSend = array("files" => $output);
 
@@ -153,10 +182,13 @@ class Optimize
 
         if (curl_errno($ch)) {
             $result = curl_error($ch);
-            $this->addError($result,$data['id']);die();
+            $this->addError($result,$data['id']);
         }else{
             curl_close($ch);
             $res = json_decode($result, JSON_OBJECT_AS_ARRAY);
+            if (!empty($res['error'])){
+                $this->addError($res['error_long'],$data['id']);
+            }
             return $res;
         }
 
